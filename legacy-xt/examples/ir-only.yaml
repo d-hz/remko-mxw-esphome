@@ -1,0 +1,103 @@
+# =============================================================================
+#  Remko MXW  ->  ESPHome, EXTERNAL variant (38 kHz infrared)  [PLAN C]
+# -----------------------------------------------------------------------------
+#  Identical to xt-wired.yaml except that `transmitter_id` points at the IR
+#  transmitter instead of the TTL one. The protocol logic is the same
+#  (`platform: coolix`) -- that was the whole point: one codec, two outputs.
+#
+#  Useful if you do not want to open the unit at all. The trade-off is that
+#  the unit never reports anything back: the climate entity runs an assumed
+#  state, apart from what the IR receiver picks up from the original remote.
+# =============================================================================
+
+substitutions:
+  name: ac-livingroom-ir
+  friendly_name: AC Living room (IR)
+  ir_led_pin: GPIO27
+  ir_rx_pin: GPIO14
+  sda_pin: GPIO21
+  scl_pin: GPIO22
+
+esphome:
+  name: ${name}
+  friendly_name: ${friendly_name}
+
+esp32:
+  board: esp32dev
+  framework:
+    type: arduino
+
+logger:
+  level: INFO
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  power_save_mode: none
+
+api:
+  encryption:
+    key: !secret api_encryption_key
+
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+# --- IR transmitter ----------------------------------------------------------
+remote_transmitter:
+  id: ir_tx
+  pin: ${ir_led_pin}
+  carrier_duty_percent: 50%
+
+# --- IR receiver: keeps HA in sync when someone uses the original remote ------
+remote_receiver:
+  id: ir_rx
+  pin:
+    number: ${ir_rx_pin}
+    inverted: true # TSOP/VS1838B output is active-low
+    mode:
+      input: true
+      pullup: true
+  tolerance: 25%
+  idle: 25ms
+  buffer_size: 2kB
+
+climate:
+  - platform: coolix
+    name: "AC"
+    id: ac
+    transmitter_id: ir_tx
+    receiver_id: ir_rx
+    supports_cool: true
+    supports_heat: true
+    sensor: room_temperature
+    visual:
+      min_temperature: 17 °C
+      max_temperature: 30 °C
+      temperature_step: 1 °C
+
+i2c:
+  sda: ${sda_pin}
+  scl: ${scl_pin}
+  scan: true
+
+sensor:
+  - platform: bme280_i2c
+    address: 0x76
+    update_interval: 30s
+    temperature:
+      name: "Room temperature"
+      id: room_temperature
+    humidity:
+      name: "Room humidity"
+    pressure:
+      name: "Air pressure"
+
+button:
+  - platform: template
+    name: "Toggle display LED"
+    icon: mdi:lightbulb-night
+    on_press:
+      - remote_transmitter.transmit_coolix:
+          transmitter_id: ir_tx
+          first: 0xB5F5A5

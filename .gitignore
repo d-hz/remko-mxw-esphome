@@ -1,0 +1,27 @@
+# ESPHome build cache: full toolchain and intermediates, several GB.
+# Regenerated on every build.
+/.esphome/
+.esphome/
+
+# Credentials. Never commit. See esphome/secrets.yaml.example for the layout.
+secrets.yaml
+
+# Build artifacts
+*.bin
+*.elf
+
+# OS clutter
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editors
+.idea/
+.vs/
+.vscode/
+*.user
+/esphome/dashboard/
+
+# Python
+__pycache__/
+*.pyc

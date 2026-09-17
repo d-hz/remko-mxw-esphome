@@ -1,0 +1,11 @@
+# Remko MXW -- one indoor unit
+#
+# Everything substantial lives in the shared package. A room file only carries
+# the values that differ per unit. Copy this file once per indoor unit.
+
+substitutions:
+  device_name: esp-ac-livingroom # ASCII, lowercase, hyphens -- becomes the hostname
+  room: "Living room" # display name in Home Assistant
+
+packages:
+  base: !include packages/remko-xye-base.yaml

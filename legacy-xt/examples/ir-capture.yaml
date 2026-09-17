@@ -1,0 +1,63 @@
+# =============================================================================
+#  Capture the IR protocol of your own remote
+# -----------------------------------------------------------------------------
+#  Purpose: find out which IR dialect your remote speaks -- and confirm that
+#  the Coolix finding in docs/04-ir-protokoll-coolix.md holds for your unit.
+#  Takes about five minutes and requires no access to the unit at all.
+#
+#  1. Wire an IR receiver (VS1838B / TSOP38238): 3V3, GND, signal -> GPIO14.
+#  2. Flash, then open the logs:  esphome logs ir-capture.yaml
+#  3. Point the remote at the receiver from ~5 cm and press, in order:
+#       - on, off
+#       - cool 22 °C, cool 24 °C   (two setpoints -> shows the delta)
+#       - heat 22 °C
+#       - fan step 1 / 2 / 3
+#       - swing on/off
+#  4. One block appears per keypress. Look for lines like
+#       "Received Coolix: 0x..."   -> the hit; cross-check it against
+#                                     ir/remko-coolix-codes.csv
+#       "Received Raw: [...]"      -> unknown dialect, capture raw codes
+# =============================================================================
+
+substitutions:
+  name: ac-ir-capture
+  rx_pin: GPIO14 # data pin of the VS1838B
+
+esphome:
+  name: ${name}
+
+esp32:
+  board: esp32dev
+  framework:
+    type: arduino
+
+logger:
+  level: DEBUG # required for the IR dumps to appear
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+# Created automatically when you add the device through the ESPHome dashboard.
+# Using the file by hand: generate a key with  openssl rand -base64 32
+api:
+#  encryption:
+#    key: "BASE64_KEY_HERE"
+
+ota:
+  - platform: esphome
+#    password: "OTA_PASSWORD_HERE"
+
+# --- the capture itself ------------------------------------------------------
+remote_receiver:
+  pin:
+    number: ${rx_pin}
+    inverted: true # TSOP output is active-low
+    mode:
+      input: true
+      pullup: true
+  # AC remotes send long frames -> generous receive parameters:
+  dump: all # decode every known protocol and show raw
+  tolerance: 25%
+  idle: 25ms
+  buffer_size: 2kB

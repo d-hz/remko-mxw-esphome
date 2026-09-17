@@ -1,0 +1,182 @@
+# =============================================================================
+#  Remko MXW  ->  ESPHome over the XYE bus   |   Board: LILYGO T-CAN485
+# -----------------------------------------------------------------------------
+#  SHARED PACKAGE for all indoor units. Do not flash this file directly --
+#  include it from a per-room file, see ../example-room.yaml.
+#
+#  Substitutions expected from the room file:
+#      device_name   e.g. esp-ac-livingroom   (ASCII, lowercase, hyphens)
+#      room          e.g. Living room         (display name, any characters)
+#
+#  Wiring -- screw terminals only, nothing to solder:
+#      T-CAN485 "POWER DC 5~12V"  +   <---- CN403  5V   (brown)
+#                                 -   <---- CN403  E    (white)
+#      T-CAN485 "RS-485"          A   <---- CN403  X    (red)
+#                                 B   <---- CN403  Y    (yellow)
+#      Wire colours measured on the original Remko cable. Ring out every new
+#      pigtail before putting 5 V on it -- see docs/02-xye-inbetriebnahme.md.
+#
+#  Board GPIO map, do not reuse these pins:
+#      GPIO21/22      UART to the RS-485 transceiver
+#      GPIO16/17/19   enable pins, see below
+#      GPIO26/27/23   CAN (unused),   GPIO04  WS2812
+#      Free: GPIO25, 32, 33, 05, 12, 34, 35, 18
+#
+#  Power: CN403 carries 5 V next to X/Y/E. Measured on a real unit: it powers
+#  an ESP32 reliably, including at maximum cooling load, and stays live while
+#  the unit is in standby. No separate PSU. See docs/03-messprotokolle.md.
+#
+#  The XYE bus is bidirectional: real sensor readings, compressor state and
+#  error flags -- over the connector the manufacturer provides for its own
+#  central controller, with no modification to the unit.
+# =============================================================================
+
+esphome:
+  name: ${device_name}
+  friendly_name: AC ${room}
+
+esp32:
+  board: esp32dev
+  framework:
+    type: arduino
+
+external_components:
+  - source:
+      type: git
+      url: https://github.com/HomeOps/ESPHome-Midea-XYE
+      ref: v0.2.18 # pinned on purpose; read the release notes before bumping
+    components: [midea_xye]
+
+logger:
+  level: INFO
+  # ESP32: the logger sits on UART0, RS-485 runs on UART2 -> no conflict.
+  # (On an ESP8266 you would need `baud_rate: 0` here.)
+  # To debug the bus: raise the level above to DEBUG AND uncomment this block.
+  # A per-component level must never be more verbose than the global one,
+  # otherwise validation fails.
+  # logs:
+  #   midea_xye: DEBUG
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  # Static addressing is optional. DHCP with a reservation on the router is
+  # usually the simpler choice. To pin the address here instead, uncomment
+  # and add `static_ip` to the substitutions in the room file:
+  # manual_ip:
+  #   static_ip: ${static_ip}
+  #   gateway: 192.168.1.1
+  #   subnet: 255.255.255.0
+  #
+  # No power saving: with it enabled the climate card in Home Assistant
+  # reacts noticeably slower.
+  power_save_mode: none
+
+api:
+  encryption:
+    key: !secret api_encryption_key
+
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+# --- T-CAN485: enable pins ---------------------------------------------------
+#  The board has built-in automatic direction switching that has to be enabled
+#  over GPIO. All three pins are active-low.
+#
+#  ESPHome drives a `output: platform: gpio` to OFF at startup; with
+#  `inverted: true` that puts the pin physically HIGH -- i.e. enabled. This is
+#  why these outputs are never switched anywhere, they only need to exist.
+#
+#  Without this block the transceiver stays mute and NOTHING in the log hints
+#  at the cause. Pin map verified against two independent ESPHome projects:
+#    github.com/jbj/t-can485-esphome  and  github.com/elupus/esphome-nibe
+output:
+  - platform: gpio
+    id: rs485_enable # enable the transceiver
+    pin:
+      number: GPIO19
+      inverted: true
+  - platform: gpio
+    id: rs485_auto_direction # enable automatic direction switching
+    pin:
+      number: GPIO17
+      inverted: true
+  - platform: gpio
+    id: rs485_enable_5v # 5 V supply for the transceiver
+    pin:
+      number: GPIO16
+      inverted: true
+
+uart:
+  id: xye_uart
+  tx_pin: GPIO22
+  rx_pin: GPIO21
+  baud_rate: 4800
+
+# --- Climate entity and live readings ----------------------------------------
+climate:
+  - platform: midea_xye
+    name: "AC"
+    id: ac
+    uart_id: xye_uart
+    # Indoor unit address (rotary switch S2 + DIP S1, 0x00..0x3F).
+    # With one ESP per unit on its own bus, just let it search.
+    address: 0x00
+    auto_discover: true
+    period: 1s
+    visual:
+      min_temperature: 17 °C
+      max_temperature: 30 °C
+      temperature_step: 1 °C
+    # No true AUTO mode over XYE: the indoor unit only knows HEAT or COOL,
+    # the changeover lived in the original wall thermostat. Model it with a
+    # Home Assistant automation if you need it.
+    supported_modes: [FAN_ONLY, COOL, HEAT, DRY]
+    # The bus knows exactly one swing bit and the receive path maps it to
+    # VERTICAL. Listing HORIZONTAL or BOTH would only produce feedback that
+    # contradicts the selection. See docs/03-messprotokolle.md.
+    supported_swing_modes: [VERTICAL]
+
+    # Follow-Me: point `follow_me_sensor` at a temperature sensor and the unit
+    # regulates on that value instead of its own return-air probe. Not enabled
+    # here because no external room sensor is fitted.
+    # follow_me_sensor: room_temperature
+
+    # --- what a one-way IR path cannot do: real feedback ---
+    discovered_address:
+      name: "XYE address"
+    outdoor_temperature:
+      name: "Outdoor temperature"
+    temperature_2a:
+      name: "Indoor coil"
+    temperature_3:
+      name: "Outdoor coil"
+    fan_speed:
+      name: "Fan speed (actual)"
+    compressor_active:
+      name: "Compressor running"
+    defrost:
+      name: "Defrost cycle"
+    error_flags:
+      name: "Error flags"
+    protect_flags:
+      name: "Protection flags"
+
+# --- Diagnostics -------------------------------------------------------------
+debug:
+  update_interval: 60s
+
+sensor:
+  - platform: uptime
+    name: "Uptime"
+    update_interval: 60s
+
+  - platform: wifi_signal
+    name: "Wi-Fi signal"
+    update_interval: 120s
+
+text_sensor:
+  - platform: debug
+    reset_reason:
+      name: "Reset reason"
